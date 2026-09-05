@@ -1,0 +1,9 @@
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+subjectAltName=@alt_names
+[alt_names]
+IP.1 = 103.42.30.173
+DNS.1 = localhost
+IP.2 = 127.0.0.1
+IP.3 = 0.0.0.0
+IP.4 = 103.42.30.173

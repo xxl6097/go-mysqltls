@@ -1,0 +1,43 @@
+# 用 Docker 起一个开了 TLS 的 MySQL 8.0, 配合本仓库的 demo 客户端使用。
+#
+# 用法:
+#   docker compose up -d
+#   然后客户端直接连 127.0.0.1:3306, CA 已内嵌进二进制, 无需 MYSQL_CA_PATH:
+#     MODE=tls MYSQL_HOST=127.0.0.1 MYSQL_PORT=3306 \
+#     MYSQL_USER=appuser MYSQL_PASSWORD=apppass MYSQL_DB=shop \
+#     go run .
+#
+# 说明:
+#   - 服务端 TLS 参数放在 deploy/my.cnf (挂到 /etc/mysql/conf.d/tls.cnf),
+#     改配置只需 docker compose restart mysql, 不用动 compose。
+#   - certs/ 只读挂载 (ssl_ca / ssl_cert / ssl_key 都指到 /certs), 私钥不落数据卷。
+#   - 密码用环境变量覆盖, 缺省值仅供本地 demo (secret/apppass)。
+#   - 首次起库会初始化数据卷, 之后再改 MYSQL_*_PASSWORD 不会生效。
+#   - 证书 SAN 需覆盖连接用地址: 默认 gen-ca.sh 已含 DNS:localhost + IP:127.0.0.1。
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mysql-tls
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-secret}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-shop}
+      MYSQL_USER: ${MYSQL_USER:-appuser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-apppass}
+      LANG: C.UTF-8
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql-tls-data:/var/lib/mysql
+      - ./certs:/certs:ro
+      - ./deploy/my.cnf:/etc/mysql/conf.d/tls.cnf:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 40s
+
+volumes:
+  mysql-tls-data:
