@@ -1,4 +1,4 @@
-package main
+package db
 
 import (
 	"crypto/sha256"
@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"mysqltls-demo/certs"
 	"os"
 
 	"github.com/go-sql-driver/mysql"
@@ -71,7 +72,7 @@ func RegisterTLSPresets(caPath, spkiFP string) error {
 // 如果用户显式指定了路径, 文件必须存在, 否则直接报错, 不静默回退。
 func loadCAPEM(caPath string) ([]byte, error) {
 	if caPath == "" {
-		return embeddedCACert, nil
+		return certs.EmbeddedCACert, nil
 	}
 	caPEM, err := os.ReadFile(caPath)
 	if err != nil {

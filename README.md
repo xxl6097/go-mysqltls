@@ -122,7 +122,7 @@ go run . -mode=tls
 
 `[ssl] cipher = "..."` 非空就是真的 TLS，空字符串则提示未加密。
 
-> **CA 打包说明**: `certs_embed.go` 用 `go:embed` 把 `certs/ca.pem` 编进二进制,
+> **CA 打包说明**: `certs/certs_embed.go` 用 `go:embed` 把 `certs/ca.pem` 编进二进制,
 > 所以上面不设 `MYSQL_CA_PATH` 也能跑, 部署只带一个可执行文件即可。
 > 换 CA / 续期后需要重新 `go build`; 若想"换 CA 不重编", 才临时
 > `export MYSQL_CA_PATH=/path/to/new-ca.pem` 覆盖。私钥 (`ca.key`/`server.key`)

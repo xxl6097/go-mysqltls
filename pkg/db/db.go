@@ -1,4 +1,4 @@
-package main
+package db
 
 import (
 	"database/sql"
@@ -9,11 +9,11 @@ import (
 )
 
 // Run 是入口的统一执行单元:
-//   1. 注册 TLS 预设/ssh 拨号器
-//   2. 打开连接, 设置连接池上限
-//   3. Ping 触发实际拨号
-//   4. 读 Ssl_cipher 确认是不是真的加密
-//   5. 跑一条简单的 SELECT 验证通路
+//  1. 注册 TLS 预设/ssh 拨号器
+//  2. 打开连接, 设置连接池上限
+//  3. Ping 触发实际拨号
+//  4. 读 Ssl_cipher 确认是不是真的加密
+//  5. 跑一条简单的 SELECT 验证通路
 func Run(cfg *Config, mode string) error {
 	if err := RegisterTLSPresets(cfg.CAPath, cfg.SPKIFP); err != nil {
 		return err
