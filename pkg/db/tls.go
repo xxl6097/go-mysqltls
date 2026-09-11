@@ -6,10 +6,10 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
-	"mysqltls-demo/certs"
 	"os"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/xxl6097/go-mysqltls/certs"
 )
 
 // RegisterTLSPresets 把三套 TLS 配置注册进 go-sql-driver/mysql:

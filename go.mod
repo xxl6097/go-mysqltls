@@ -1,4 +1,4 @@
-module mysqltls-demo
+module github.com/xxl6097/go-mysqltls
 
 go 1.22
 

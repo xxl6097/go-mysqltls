@@ -11,24 +11,95 @@ Go 连接 MySQL 防网络抓包的最小可运行示例，覆盖三种主流方�
 ## 目录结构
 
 ```
-mysqltls-demo/
-├── main.go              入口与命令行参数
-├── config.go            配置加载 (全部来自环境变量, 0 明文凭证入仓库)
-├── tls.go               TLS 预设注册 (verify-full / pin / skip-pinning)
-├── tunnel.go            SSH 拨号器注册 (自定义协议 "ssh")
-├── db.go                连接池与查询演示, 含密码掩码
-├── certs_embed.go       用 go:embed 把 certs/ca.pem 打包进二进制 (CA 路径变可选)
-├── docker-compose.yml   Docker 起 TLS MySQL (mysql-tls)
-├── deploy/my.cnf        MySQL 服务端 TLS 配置 (挂载进容器 conf.d)
-├── cmd/probe-server-cert/  打印 MySQL 实际出示的证书链 (排查 x509 SAN 报错)
+mysqltls-demo/                     module: github.com/xxl6097/go-mysqltls
+├── cmd/
+│   ├── test/main.go              入口与命令行参数 (-mode=tls|pin|ssh)
+│   ├── demo/main.go              基于现成 DSN 的连接测试 demo (Ping/版本/表/SELECT 1)
+│   └── probe-server-cert/main.go 打印 MySQL 实际出示的证书链 (排查 x509 SAN 报错)
+├── pkg/db/
+│   ├── config.go      配置加载 (环境变量, 0 明文凭证入仓库)
+│   ├── connect.go     封装的密码直连 API: Connect() / Options
+│   ├── dsn.go         DSN 直连: OpenDSN() 自动建库 / EnsureDatabase / RedactDSN
+│   ├── inspect.go     连接自检: Inspect() 版本/当前库/是否加密/库表清单
+│   ├── tls.go         TLS 预设注册 (verify-full / pin / skip-pinning)
+│   ├── tunnel.go      SSH 拨号器注册 (自定义协议 "ssh")
+│   └── db.go          连接池与查询演示, 含密码掩码
+├── certs/
+│   ├── ca.pem             自签 CA (客户端验服务端用, 已 go:embed)
+│   ├── server.pem / .key  服务端证书/私钥 (给 MySQL 用, 绝不进二进制)
+│   └── certs_embed.go     //go:embed ca.pem → certs.EmbeddedCACert
+├── docker-compose.yml  Docker 起 TLS MySQL (mysql-tls)
+├── deploy/my.cnf       MySQL 服务端 TLS 配置 (挂载进容器 conf.d)
 ├── scripts/
-│   ├── gen-ca.sh        一键生成自签 CA + 服务端证书
+│   ├── gen-ca.sh       一键生成自签 CA + 服务端证书
 │   ├── reissue-server-cert.sh  用现有 CA 为指定 IP/DNS 重签服务端证书 (CA 不变)
-│   └── demo-tls-capture.sh   抓包直观看明文 vs 密文
+│   └── demo-tls-capture.sh     抓包直观看明文 vs 密文
 ├── .env.example
 ├── go.mod / go.sum
 └── README.md
 ```
+
+## 封装 API：账号密码直连
+
+连接逻辑已封装进 `pkg/db`，别的项目 import 后只需账号/密码/地址/库名，
+CA 校验（默认用内嵌的 `certs/ca.pem`）与连接池都在内部处理：
+
+```go
+import "github.com/xxl6097/go-mysqltls/pkg/db"
+
+// 最简：用内嵌 CA 以 verify-full 连接, 并 Ping 一次
+conn, err := db.Connect("root", "<密码>", "103.42.1.173:3306", "test001")
+if err != nil { return err }
+defer conn.Close()
+
+// 需要更多控制时用 Options
+conn, err := db.Options{
+    User: "root", Password: "<密码>",
+    Addr: "103.42.50.113:3306", DB: "test001",
+    SPKIFP:  fp,     // 可选: 只钉服务端公钥指纹(pin), 忽略 CA 与主机名
+    Insecure: true,  // 可选: 跳过证书校验(仅调试/隧道内层)
+    Net:     "ssh",  // 可选: 走 SSH 隧道(需先 db.RegisterSSHDialer)
+}.Open()
+```
+
+- `Addr` 省略端口时默认 `3306`。
+- `Connect`/`Open` 内部会按需注册 TLS 预设、设好连接池上限并 `Ping`，
+  失败时自动关闭连接池再返回错误。
+
+如果手上已经是一条完整 DSN，用 `OpenDSN` 更直接（自动建库 + 自检）：
+
+```go
+conn, created, err := db.OpenDSN(ctx, "root:pwd@tcp(host:8306)/shop?charset=utf8mb4")
+if err != nil { return err }
+defer conn.Close()
+_ = created // true 表示这个库是本次自动创建的
+
+info := db.Inspect(ctx, conn) // 版本 / 当前库 / Ssl_cipher / 库表清单 / 首表行数
+if !info.Encrypted() { log.Println("警告: 当前连接未加密") }
+```
+
+- `OpenDSN` 只在「库不存在(MySQL 1049)」时自动 `CREATE DATABASE` 并重连；
+  密码错/网络不通/权限不足等其它错误直接上报，不做掩盖。
+- `RedactDSN` 打印前把密码换成 `***`；`EnsureDatabase`/`RedactDSN`/`QuoteIdent` 可单独用。
+
+## 测试 demo：基于现成 DSN 的连接自检
+
+`cmd/demo` 拿一条完整 DSN 直连（不走环境变量拼装），依次探测
+Ping → 版本 → 当前库 → `Ssl_cipher`(是否加密) → 库/表清单 → 首表行数 → `SELECT 1`：
+
+```bash
+go run ./cmd/demo
+go run ./cmd/demo -dsn 'user:pass@tcp(host:8306)/db?charset=utf8mb4&parseTime=true&loc=Local'
+MYSQL_DSN='...' go run ./cmd/demo
+```
+
+DSN 不带库名时会列出服务器上所有库（`SHOW DATABASES`），方便确认该连哪个。
+打印连接串时密码用 `***` 脱敏。
+
+**DSN 里的库不存在时会自动创建**：带库名的 DSN 在握手阶段就会报
+`Error 1049 Unknown database`，所以 demo 会先用一条去掉库名的连接执行
+`CREATE DATABASE IF NOT EXISTS <库> CHARACTER SET utf8mb4`，再重连原来的 DSN。
+需要账号有 `CREATE` 权限（`root` 默认满足）。
 
 ## 〇、Docker 一键起一个 TLS MySQL（本地跑 demo 最快）
 
@@ -46,7 +117,7 @@ export MYSQL_USER=appuser
 export MYSQL_PASSWORD=apppass
 export MYSQL_DB=shop
 export MODE=tls
-go run .
+go run ./cmd/test
 ```
 
 - 容器把 `certs/server.pem` / `certs/server.key` 以 **只读** 方式挂进 mysqld,
@@ -61,24 +132,24 @@ go run .
 
 ## 〇、已验证的真实环境
 
-| 项 | 值 |
-|---|---|
-| 远程 MySQL | `103.42.30.173:17941` (docker 8.0.46) |
-| 端到端密文 | `TLS_AES_128_GCM_SHA256` |
-| CA 证书 | `certs/ca.pem` (服务器已就位, 已拉回本地) |
-| 服务端证书 SAN | `IP:103.42.30.173, DNS:localhost, IP:127.0.0.1` |
-| `require_secure_transport` | `ON` (明文连接会被拒绝并报 `ERROR 3159`) |
+| 项 | 值                                              |
+|---|-------------------------------------------------|
+| 远程 MySQL | `103.42.11.173:3306` (docker 8.0.46)            |
+| 端到端密文 | `TLS_AES_128_GCM_SHA256`                        |
+| CA 证书 | `certs/ca.pem` (服务器已就位, 已拉回本地)       |
+| 服务端证书 SAN | `IP:103.23.30.173, DNS:localhost, IP:127.0.0.1` |
+| `require_secure_transport` | `ON` (明文连接会被拒绝并报 `ERROR 3159`)        |
 
 复现命令：
 
 ```bash
 cd /Users/uuxia/WorkBuddy/2026-09-05-12-12-05/mysqltls-demo
 MODE=tls \
-MYSQL_HOST=103.42.30.173 MYSQL_PORT=17941 \
+MYSQL_HOST=103.42.6.173 MYSQL_PORT=3306 \
 MYSQL_USER=root MYSQL_PASSWORD='<凭据>' \
 MYSQL_DB=test001 \
 MYSQL_CA_PATH="$PWD/certs/ca.pem" \
-go run . -mode=tls
+go run ./cmd/test -mode=tls
 ```
 
 成功标志：
@@ -112,7 +183,7 @@ export MYSQL_PASSWORD=secret
 export MYSQL_DB=shop
 export MODE=tls
 
-go run . -mode=tls
+go run ./cmd/test -mode=tls
 # 期望输出:
 #   [dial] appuser:***@tcp(mysql.example.com:3306)/shop?tls=verify-full&...
 #   [ssl]  cipher = "TLS_AES_256_GCM_SHA384"
@@ -140,7 +211,7 @@ openssl x509 -in certs/server.pem -pubkey -noout | \
 export MODE=pin
 export MYSQL_SPKI_FP="<上面那串 base64>"
 
-go run . -mode=pin
+go run ./cmd/test -mode=pin
 ```
 
 后续服务端换证书 / 续期 *只要私钥不换*，指纹不变，业务不需要改 config。
@@ -159,7 +230,7 @@ export MYSQL_SSH_HOST=jump.example.com:22
 export MYSQL_SSH_USER=deploy
 export MYSQL_SSH_KEY_PATH="$HOME/.ssh/jump_key"
 
-go run . -mode=ssh
+go run ./cmd/test -mode=ssh
 ```
 
 DSN 自动变成 `appuser:***@ssh(mysql.internal:3306)/shop?tls=skip-pinning`，driver 调

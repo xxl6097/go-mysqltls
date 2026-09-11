@@ -11,20 +11,22 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	db2 "mysqltls-demo/pkg/db"
 	"os"
+
+	"github.com/xxl6097/go-mysqltls/pkg/db"
 )
 
 func main() {
 	mode := flag.String("mode", envOr("MODE", "tls"), "tls | pin | ssh")
 	flag.Parse()
 
-	cfg, err := db2.LoadConfig()
+	cfg, err := db.LoadConfig()
 	if err != nil {
 		log.Fatalf("[config] %v", err)
 	}
 
-	if err := db2.Run(cfg, *mode); err != nil {
+	fmt.Println(cfg)
+	if err := db.Run(cfg, *mode); err != nil {
 		log.Fatalf("[connect] %v", err)
 	}
 	fmt.Println("OK - connection is up & query works")

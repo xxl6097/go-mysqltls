@@ -42,21 +42,6 @@ func LoadConfig() (*Config, error) {
 		SSHUser:    lookup("MYSQL_SSH_USER"),
 		SSHKeyPath: lookup("MYSQL_SSH_KEY_PATH"),
 	}
-	if c.Mode == "" {
-		c.Mode = "tls"
-	}
-	if c.Host == "" {
-		c.Host = "103.42.30.173"
-	}
-	if c.User == "" {
-		c.User = "root"
-	}
-	if c.Password == "" {
-		c.Password = "Zjjy2014Xyz"
-	}
-	if c.DB == "" {
-		c.DB = "db_clife_employee"
-	}
 	p, err := strconv.Atoi(lookup("MYSQL_PORT")) //envDefault("MYSQL_PORT", "3306")
 	if err != nil {
 		//return nil, fmt.Errorf("MYSQL_PORT 非法: %w", err)
